@@ -1,0 +1,7 @@
+graph:
+  image: 192.168.64.139:1500/neo4j-demo:latest
+  container_name: MyGraph
+  volumes:
+    - /var/log/my_graph/:/app/logs
+  ports:
+    - 127.0.0.1:19026:19026

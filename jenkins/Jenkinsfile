@@ -1,0 +1,101 @@
+pipeline {
+    agent any
+	// 执行脚本时的环境变量
+    environment {
+		GIT_CREDENTIALS_ID = "78542ab3-9267-441f-8a56-d0e097df32c5"
+		GIT_URL = "https://github.com/FangGuoCheng/neo4j-demo.git"
+		SVN_CREDENTIALS_ID = "180595a9-55ad-49ee-8c78-eb9e5094b0cc"
+		SVN_URL = "http://192.168.64.137:28080/svn/neo4j-demo"
+		// 远程主机运行程序包的位置
+		RUN_PATH = "/root/app/neo4j-demo/"
+	}
+	// 插件
+	options {
+		// 执行脚本时输出上显示时间戳
+        timestamps()
+		// 设置脚本超时时间为1小时
+        timeout(time: 60, unit: 'MIN')
+    }
+	// 执行脚本时输入的参数
+	parameters {
+            choice choices: 'dev\ntest', description: '配置文件', name: 'config'
+            string defaultValue: '1.0', description: '版本号', name: 'version'
+    }
+    stages {
+        // 步骤一: 下载代码
+        stage('Code pull Stage') {
+            steps {
+    			script{
+                    // 使用 github 下载代码
+                    //git branch: 'master', credentialsId: GIT_CREDENTIALS_ID , url: GIT_URL
+                    // 使用 svn 下载代码
+                    checkout([$class: 'SubversionSCM',
+                        additionalCredentials: [],
+                        excludedCommitMessages: '',
+                        excludedRegions: '',
+                        excludedRevprop: '',
+                        excludedUsers: '',
+                        filterChangelog: false,
+                        ignoreDirPropChanges: false,
+                        includedRegions: '',
+                        locations: [[cancelProcessOnExternalsFail: true,
+                            credentialsId: SVN_CREDENTIALS_ID,
+                            depthOption: 'infinity',
+                            ignoreExternalsOption: true,
+                            local: '.',
+                            remote: SVN_URL]],
+                        quietOperation: true,
+                        workspaceUpdater: [$class: 'UpdateUpdater']])
+    			}
+			}
+		}
+		// 步骤二: 修改配置文件
+		stage('Changer config') {
+			steps {
+				script{
+					sh "chmod +x ./jenkins/task.sh"
+					sh "./jenkins/task.sh ccf $config"
+
+				}
+			}
+		}
+		// 步骤三: 打包程序
+		stage('Gradlew build') {
+			steps {
+				script{
+					sh "./jenkins/task.sh build $version"
+				}
+			}
+		}
+		// 步骤四: 将程序包发送到远程主机上
+		stage('Remote jar file send') {
+			steps {
+			    sshPut remote: getRemote(), from: './jenkins/task.sh', into: RUN_PATH
+                sshPut remote: getRemote(), from: './build/libs/neo4j-demo-' + version + '.jar', into: DOCKER_COMPOSE_RUN_PATH
+			}
+		}
+		// 步骤五: 控制远程主机停止原来的程序
+		stage('Remote kill java') {
+			steps {
+                sshCommand remote: getRemote(), command: "cd $RUN_PATH && chmod +x ./task.sh && ./task.sh kill neo4j-demo-" + version + ".jar"
+			}
+		}
+		// 步骤五: 控制远程主机运行新的程序包
+		stage('Remote run java') {
+			steps {
+                sshCommand remote: getRemote(), command: "cd $RUN_PATH && chmod +x ./task.sh && ./task.sh run neo4j-demo-" + version + ".jar"
+			}
+		}
+	}
+}
+// 远程机器的登陆配置
+def getRemote() {
+	def remote = [:]
+	remote.name = 'app1'
+	remote.host = '192.168.64.139'
+	remote.port = 22
+	remote.user = 'root'
+	remote.password = 'root'
+	remote.allowAnyHosts = true
+	return remote
+}

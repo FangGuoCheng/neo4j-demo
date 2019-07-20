@@ -1,0 +1,112 @@
+pipeline {
+    agent any
+	// 执行脚本时的环境变量
+    environment {
+		GIT_CREDENTIALS_ID = "78542ab3-9267-441f-8a56-d0e097df32c5"
+		GIT_URL = "https://github.com/FangGuoCheng/neo4j-demo.git"
+		SVN_CREDENTIALS_ID = "180595a9-55ad-49ee-8c78-eb9e5094b0cc"
+		SVN_URL = "http://192.168.64.137:28080/svn/neo4j-demo"
+		// Docker 仓库
+		DOCKER_REGISTRY_URL = "http://192.168.64.137:15000"
+		// 项目中 Dockerfile 存放路径
+		DOCKER_FILE_PATH = "./"
+		// Docker 构建时的镜像名字
+		DOCKER_IMAGE_NAME = "192.168.64.137:15000/neo4j-demo"
+		// 远程主机存放 docker-compose 文件文职
+		DOCKER_COMPOSE_RUN_PATH = "/root/app/neo4j-demo/"
+	}
+	// 插件
+	options {
+		// 执行脚本时输出上显示时间戳
+        timestamps()
+		// 设置脚本超时时间为1小时
+        timeout(time: 60, unit: 'MIN')
+    }
+	// 执行脚本时输入的参数meters {
+            choice choices: 'dev\ntest', description: '配置文件', name: 'config'
+            string defaultValue: '1.0', description: '版本号', name: 'version'
+    }
+    stages {
+        // 步骤一: 下载代码
+        stage('Code pull') {
+            steps {
+    			script{
+                    // 使用 git 下载代码
+    			    //git branch: 'master', credentialsId: GIT_CREDENTIALS_ID, url: GIT_URL
+                    // 使用 svn 下载代码
+                    checkout([$class: 'SubversionSCM',
+                        additionalCredentials: [],
+                        excludedCommitMessages: '',
+                        excludedRegions: '',
+                        excludedRevprop: '',
+                        excludedUsers: '',
+                        filterChangelog: false,
+                        ignoreDirPropChanges: false,
+                        includedRegions: '',
+                        locations: [[cancelProcessOnExternalsFail: true,
+                            credentialsId: SVN_CREDENTIALS_ID,
+                            depthOption: 'infinity',
+                            ignoreExternalsOption: true,
+                            local: '.',
+                            remote: SVN_URL]],
+                        quietOperation: true,
+                        workspaceUpdater: [$class: 'UpdateUpdater']])
+    			}
+			}
+		}
+		// 步骤二: 修改配置文件
+		stage('Changer config') {
+			steps {
+				script{
+					sh "chmod +x ./jenkins/task.sh"
+					sh "./jenkins/task.sh ccf $config"
+					sh "./jenkins/task.sh cdc ${DOCKER_IMAGE_NAME}:${version}"
+				}
+			}
+		}
+		// 步骤三: 打包程序
+		stage('Gradlew build') {
+			steps {
+				script{
+					sh "./jenkins/task.sh build $version"
+				}
+			}
+		}
+		// 步骤四: 构建新的 Docker 镜像,同时上传镜像
+		stage('Docker build and push') {
+			steps {
+				script{
+                    docker.withRegistry(DOCKER_REGISTRY_URL) {
+                        def image = docker.build(DOCKER_IMAGE_NAME + ":" + version,"--build-arg NEO4J_DEMO_JAR=neo4j-demo-${version}.jar $DOCKER_FILE_PATH")
+                        image.push()
+                    }
+				}
+			}
+		}
+		// 步骤五: 将 docker-compose 文件发送到远程主机上
+		stage('Remote jar file send') {
+			steps {
+			    sshPut remote: getRemote(), from: './docker-compose.yml', into: DOCKER_COMPOSE_RUN_PATH
+			}
+		}
+		// 步骤六: 使用 docker-compose 运行 Docker 镜像
+		stage('Remote docker-compose restart') {
+			steps {
+				script{
+				  sshCommand remote: remote, command: "cd $DOCKER_COMPOSE_RUN_PATH && docker-compose down && docker-compose up -d"
+				}
+			}
+		}
+	}
+}
+// 远程机器的登陆配置
+def getRemote() {
+	def remote = [:]
+	remote.name = 'app1'
+	remote.host = '192.168.64.139'
+	remote.port = 22
+	remote.user = 'root'
+	remote.password = 'root'
+	remote.allowAnyHosts = true
+	return remote
+}

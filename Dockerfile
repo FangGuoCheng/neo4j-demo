@@ -1,0 +1,8 @@
+FROM openjdk:8
+ARG NEO4J_DEMO_JAR=neo4j-demo-1.0.0.jar
+ADD ./build/libs/${NEO4J_DEMO_JAR} /app/
+WORKDIR /app
+EXPOSE 8080
+VOLUME ./logs
+ENV NEO4J_DEMO_JAR=${NEO4J_DEMO_JAR}
+CMD java -jar  -Xms1048m -Xmx1048m ${NEO4J_DEMO_JAR}
